@@ -1,22 +1,31 @@
-import { bufferToBase64Url, base64UrlToBuffer } from '../crypto/keys';
+import {
+  encryptFile,
+  decryptFile,
+  generateKey,
+  exportKey,
+  importKey,
+  bufferToBase64Url,
+  base64UrlToBuffer,
+} from '../cryptoUtils.js';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://guardianbox-server.onrender.com/api';
+// Production Render Server Endpoint
+const API_BASE_URL = 'https://guardianbox-server.onrender.com/api/files';
 
-export interface UploadPayloadOptions {
-  ciphertext: ArrayBuffer;
-  iv: Uint8Array;
-  salt?: Uint8Array | null;
-  maxDownloads: number | null;
-  ttlSeconds: number;
+export interface UploadOptions {
+  ttl_seconds?: number;
+  max_downloads?: number;
+  onProgress?: (percent: number) => void;
 }
 
-export interface UploadResult {
+export interface UploadResponse {
   id: string;
   expires_at: number;
   max_downloads: number | null;
+  key: string;
+  shareableUrl: string;
 }
 
-export interface RemoteFileMetadata {
+export interface FileMetadata {
   id: string;
   size_bytes: number;
   iv: string;
@@ -27,104 +36,95 @@ export interface RemoteFileMetadata {
   remaining_downloads: number | null;
 }
 
-export interface DownloadResult {
-  ciphertext: ArrayBuffer;
-  iv: Uint8Array;
-  salt: Uint8Array | null;
-  wasBurned: boolean;
-  downloadCount: number;
-  maxDownloads: number | null;
-}
-
 /**
- * Uploads encrypted ciphertext blob and metadata to blind server.
- * ZERO-KNOWLEDGE GUARANTEE: Never includes secret keys or unencrypted filenames.
+ * Encrypts a file client-side and posts the ciphertext payload to POST /api/files/upload
  */
-export async function uploadEncryptedPayload(options: UploadPayloadOptions): Promise<UploadResult> {
+export async function uploadEncryptedFile(
+  file: File,
+  options?: UploadOptions
+): Promise<UploadResponse> {
+  // 1. Generate 256-bit AES-GCM secret key client-side
+  const key = await generateKey();
+  const exportedKeyStr = await exportKey(key);
+
+  // 2. Encrypt file client-side
+  const { ciphertext, iv } = await encryptFile(file, key, options?.onProgress);
+  const ivBase64 = bufferToBase64Url(iv);
+
+  // 3. Construct FormData matching server expectations
   const formData = new FormData();
+  const fileBlob = new Blob([ciphertext], { type: 'application/octet-stream' });
   
-  // Convert ciphertext ArrayBuffer to Blob
-  const blob = new Blob([options.ciphertext], { type: 'application/octet-stream' });
-  formData.append('file', blob, 'encrypted.bin');
-  
-  // Encode IV to Base64
-  formData.append('iv', bufferToBase64Url(options.iv));
+  // Field name MUST be 'ciphertext' to match Multer on the backend
+  formData.append('ciphertext', fileBlob, file.name);
+  formData.append('iv', ivBase64);
 
-  if (options.salt) {
-    formData.append('salt', bufferToBase64Url(options.salt));
+  if (options?.ttl_seconds) {
+    formData.append('ttl_seconds', options.ttl_seconds.toString());
+  }
+  if (options?.max_downloads) {
+    formData.append('max_downloads', options.max_downloads.toString());
   }
 
-  if (options.maxDownloads !== null) {
-    formData.append('max_downloads', options.maxDownloads.toString());
-  }
-
-  formData.append('ttl_seconds', options.ttlSeconds.toString());
-
-  const response = await fetch(`${API_BASE}/files/upload`, {
+  // 4. Send upload request
+  const response = await fetch(`${API_BASE_URL}/upload`, {
     method: 'POST',
     body: formData,
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || errorData.error || `Upload failed with HTTP ${response.status}`);
+    const err = await response.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(err.error || `Upload failed with status ${response.status}`);
   }
 
-  const data = await response.json();
+  const result = await response.json();
+
+  // Anchor secret key ONLY in client-side URL hash fragment (#)
+  const shareableUrl = `${window.location.origin}/#${result.id}:${exportedKeyStr}`;
+
   return {
-    id: data.id,
-    expires_at: data.expires_at,
-    max_downloads: data.max_downloads,
+    id: result.id,
+    expires_at: result.expires_at,
+    max_downloads: result.max_downloads,
+    key: exportedKeyStr,
+    shareableUrl,
   };
 }
 
 /**
- * Inspects remote metadata without decrementing burn counter.
+ * Fetches pre-download file metadata from server (GET /api/files/:id/meta)
  */
-export async function fetchFileMetadata(fileId: string): Promise<RemoteFileMetadata> {
-  const response = await fetch(`${API_BASE}/files/${fileId}/meta`);
+export async function getFileMetadata(id: string): Promise<FileMetadata> {
+  const response = await fetch(`${API_BASE_URL}/${id}/meta`);
   if (!response.ok) {
-    if (response.status === 404 || response.status === 410) {
-      throw new Error('This file has expired or was permanently destroyed after being read.');
-    }
-    throw new Error(`Failed to load file status (${response.status})`);
+    throw new Error('File not found or expired.');
   }
-
-  const json = await response.json();
-  return json.data;
+  const result = await response.json();
+  return result.data;
 }
 
 /**
- * Fetches ciphertext blob and increments burn counter.
+ * Downloads ciphertext from server (GET /api/files/:id/download) and decrypts client-side
  */
-export async function fetchEncryptedCiphertext(fileId: string): Promise<DownloadResult> {
-  const response = await fetch(`${API_BASE}/files/${fileId}/download`);
+export async function downloadAndDecryptFile(
+  id: string,
+  secretKeyStr: string,
+  onProgress?: (percent: number) => void
+) {
+  const key = await importKey(secretKeyStr);
+
+  const response = await fetch(`${API_BASE_URL}/${id}/download`);
   if (!response.ok) {
-    if (response.status === 404 || response.status === 410) {
-      throw new Error('This file has expired or was already burned after reaching its download limit.');
-    }
-    throw new Error(`Download failed (${response.status})`);
+    throw new Error('File not found, expired, or maximum download limit reached.');
   }
 
-  const ivBase64 = response.headers.get('X-Guardian-IV');
-  if (!ivBase64) {
-    throw new Error('Server response missing IV security header.');
+  const ivHeader = response.headers.get('X-Guardian-IV');
+  if (!ivHeader) {
+    throw new Error('Missing initialization vector header from server response.');
   }
 
-  const saltBase64 = response.headers.get('X-Guardian-Salt');
-  const wasBurned = response.headers.get('X-Guardian-Burned') === 'true';
-  const downloadCount = parseInt(response.headers.get('X-Guardian-Downloads-Count') || '1', 10);
-  const maxDownloadsHeader = response.headers.get('X-Guardian-Max-Downloads');
-  const maxDownloads = maxDownloadsHeader ? parseInt(maxDownloadsHeader, 10) : null;
+  const iv = new Uint8Array(base64UrlToBuffer(ivHeader));
+  const ciphertextBuffer = await response.arrayBuffer();
 
-  const ciphertext = await response.arrayBuffer();
-
-  return {
-    ciphertext,
-    iv: new Uint8Array(base64UrlToBuffer(ivBase64)),
-    salt: saltBase64 ? new Uint8Array(base64UrlToBuffer(saltBase64)) : null,
-    wasBurned,
-    downloadCount,
-    maxDownloads,
-  };
+  return await decryptFile(ciphertextBuffer, key, iv, onProgress);
 }

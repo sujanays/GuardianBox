@@ -6,24 +6,19 @@ import { cleanupService } from './services/cleanup.service.js';
 
 const app = express();
 
-// Allowed origins setup
 const allowedOrigins = [
+  'https://guardian-box-jogg.vercel.app',
   'https://guardian-qrvok1zhm-sujan-ays.vercel.app',
   'http://localhost:5173',
   'http://localhost:3000',
 ];
 
-// Middleware
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, or server-to-server)
     if (!origin) return callback(null, true);
-    
-    // Allow matching origins or any Vercel preview deployment for this project
     if (allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin)) {
       return callback(null, true);
     }
-    
     return callback(null, false);
   },
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
@@ -35,13 +30,12 @@ app.use(cors({
     'X-Guardian-Downloads-Count',
     'X-Guardian-Max-Downloads',
   ],
-  credentials: true
+  credentials: true,
 }));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -51,18 +45,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Root route handler to satisfy Render root health pings (avoids 404s in logs)
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'GuardianBox Blind Storage Server' });
 });
 
-// API Routes
-// Mounting at '/api/files' routes endpoints relative to /api/files (e.g. POST /api/files/upload)
+// Mounting router at base route prefix /api/files
 app.use('/api/files', fileRoutes);
-// Legacy mount – also expose routes at /api for backward‑compatible clients
-app.use('/api', fileRoutes);
 
-// Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -74,29 +63,15 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// 404 Fallback Handler for unhandled routes
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
-// Start cleanup background worker
 cleanupService.start();
 
 const server = app.listen(config.port, () => {
-  console.log('====================================================');
-  console.log(`🛡️  GuardianBox Blind Server running on port ${config.port}`);
-  console.log(`🔒 Zero-Knowledge Architecture active`);
-  console.log(`📦 Storage backend: ${config.storageType.toUpperCase()}`);
-  console.log(`🌐 Health check: http://localhost:${config.port}/api/health`);
-  console.log('====================================================');
+  console.log(`🛡️ GuardianBox Server running on port ${config.port}`);
 });
 
-// Graceful shutdown
 const shutdown = () => {
-  console.log('\n[Server] Shutting down gracefully...');
   cleanupService.stop();
   server.close(() => {
-    console.log('[Server] Closed all connections.');
     process.exit(0);
   });
 };
