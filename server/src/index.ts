@@ -59,6 +59,8 @@ app.get('/', (req, res) => {
 // API Routes
 // Mounting at '/api/files' routes endpoints relative to /api/files (e.g. POST /api/files/upload)
 app.use('/api/files', fileRoutes);
+// Legacy mount – also expose routes at /api for backward‑compatible clients
+app.use('/api', fileRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
