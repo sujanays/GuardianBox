@@ -35,7 +35,7 @@ export interface FileMetadata {
   download_count: number;
   remaining_downloads: number | null;
 }
-
+export type RemoteFileMetadata = FileMetadata;
 /**
  * Encrypts a file client-side and posts the ciphertext payload to POST /api/files/upload
  */
@@ -89,7 +89,45 @@ export async function uploadEncryptedFile(
     key: exportedKeyStr,
     shareableUrl,
   };
+
+// Alias for compatibility with components expecting RemoteFileMetadata
+
 }
+
+// New function: uploadEncryptedPayload
+/**
+ * Uploads already‑encrypted payload (ciphertext and IV) to the backend.
+ * Matches the usage in UploadView where encryption is performed separately.
+ */
+export async function uploadEncryptedPayload(params: {
+  ciphertext: ArrayBuffer;
+  iv: Uint8Array;
+  maxDownloads?: number | null;
+  ttlSeconds?: number | null;
+}): Promise<{ id: string; expires_at: number }> {
+  const { ciphertext, iv, maxDownloads, ttlSeconds } = params;
+  const formData = new FormData();
+  const blob = new Blob([ciphertext], { type: 'application/octet-stream' });
+  formData.append('ciphertext', blob, 'encrypted.bin');
+  formData.append('iv', bufferToBase64Url(iv));
+  if (ttlSeconds !== undefined && ttlSeconds !== null) {
+    formData.append('ttl_seconds', ttlSeconds.toString());
+  }
+  if (maxDownloads !== undefined && maxDownloads !== null) {
+    formData.append('max_downloads', maxDownloads.toString());
+  }
+  const response = await fetch(`${API_BASE_URL}/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(err.error || `Upload failed with status ${response.status}`);
+  }
+  const result = await response.json();
+  return { id: result.id, expires_at: result.expires_at };
+}
+
 
 /**
  * Fetches pre-download file metadata from server (GET /api/files/:id/meta)
@@ -127,4 +165,25 @@ export async function downloadAndDecryptFile(
   const ciphertextBuffer = await response.arrayBuffer();
 
   return await decryptFile(ciphertextBuffer, key, iv, onProgress);
+}
+export interface EncryptedCiphertextResult {
+  ciphertext: ArrayBuffer;
+  iv: Uint8Array;
+  wasBurned: boolean;
+}
+
+/** Fetches encrypted ciphertext blob and IV from backend (GET /api/files/:id/download) */
+export async function fetchEncryptedCiphertext(id: string): Promise<EncryptedCiphertextResult> {
+  const response = await fetch(`${API_BASE_URL}/${id}/download`);
+  if (!response.ok) {
+    throw new Error('File not found, expired, or maximum download limit reached.');
+  }
+  const ivHeader = response.headers.get('X-Guardian-IV');
+  if (!ivHeader) {
+    throw new Error('Missing initialization vector header from server response.');
+  }
+  const iv = new Uint8Array(base64UrlToBuffer(ivHeader));
+  const wasBurned = response.headers.get('X-Guardian-Burned') === 'true';
+  const ciphertext = await response.arrayBuffer();
+  return { ciphertext, iv, wasBurned };
 }

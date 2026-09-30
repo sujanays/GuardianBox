@@ -17,7 +17,7 @@ import {
 import { importKeyFromString, getKeyFingerprint } from '../crypto/keys';
 import { decryptFile } from '../crypto/aes';
 import type { DecryptedResult } from '../crypto/aes';
-import { fetchFileMetadata, fetchEncryptedCiphertext } from '../services/api';
+import { getFileMetadata, fetchEncryptedCiphertext } from '../services/api';
 import type { RemoteFileMetadata } from '../services/api';
 
 interface DownloadViewProps {
@@ -53,7 +53,7 @@ export const DownloadView: React.FC<DownloadViewProps> = ({
       try {
         setIsLoadingMeta(true);
         setMetaError(null);
-        const data = await fetchFileMetadata(fileId);
+        const data = await getFileMetadata(fileId);
         if (isMounted) {
           setMetadata(data);
           setIsLoadingMeta(false);
