@@ -8,10 +8,20 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: '*', // Allow frontend development requests
+  // Production UI (Vercel) + local dev UI
+  origin: [
+    'https://guardian-box-rho.vercel.app',
+    'http://localhost:5173',
+  ],
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['X-Guardian-IV', 'X-Guardian-Salt', 'X-Guardian-Burned', 'X-Guardian-Downloads-Count', 'X-Guardian-Max-Downloads'],
+  exposedHeaders: [
+    'X-Guardian-IV',
+    'X-Guardian-Salt',
+    'X-Guardian-Burned',
+    'X-Guardian-Downloads-Count',
+    'X-Guardian-Max-Downloads',
+  ],
 }));
 
 app.use(express.json());

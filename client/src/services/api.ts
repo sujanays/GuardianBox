@@ -1,6 +1,6 @@
 import { bufferToBase64Url, base64UrlToBuffer } from '../crypto/keys';
 
-const API_BASE = 'http://localhost:3001/api/files';
+const API_BASE = import.meta.env.VITE_API_BASE;
 
 export interface UploadPayloadOptions {
   ciphertext: ArrayBuffer;
