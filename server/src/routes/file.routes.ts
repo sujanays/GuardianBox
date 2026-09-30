@@ -33,18 +33,18 @@ function zeroKnowledgeGuard(req: Request, res: Response, next: Function) {
  * POST /api/files/upload
  * Accepts encrypted blob and cryptographic metadata (IV, salt, TTL, max downloads).
  */
-router.post('/upload', upload.single('ciphertext'), zeroKnowledgeGuard, async (req: Request, res: Response) => {
+router.post('/upload', upload.single('file'), zeroKnowledgeGuard, async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Missing ciphertext payload file' });
     }
 
-    const iv = req.body.iv;
+    const iv = req.body.iv || req.headers['x-guardian-iv'];
     if (!iv || typeof iv !== 'string') {
       return res.status(400).json({ error: 'Missing or invalid IV (Initialization Vector)' });
     }
 
-    const salt = req.body.salt || null;
+    const salt = req.body.salt || req.headers['x-guardian-salt'] || null;
     const maxDownloads = req.body.max_downloads ? parseInt(req.body.max_downloads, 10) : null;
     const ttlSeconds = req.body.ttl_seconds ? parseInt(req.body.ttl_seconds, 10) : 86400;
 

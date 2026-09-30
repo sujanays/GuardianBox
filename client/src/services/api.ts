@@ -45,7 +45,7 @@ export async function uploadEncryptedPayload(options: UploadPayloadOptions): Pro
   
   // Convert ciphertext ArrayBuffer to Blob
   const blob = new Blob([options.ciphertext], { type: 'application/octet-stream' });
-  formData.append('ciphertext', blob, 'encrypted.bin');
+  formData.append('file', blob, 'encrypted.bin');
   
   // Encode IV to Base64
   formData.append('iv', bufferToBase64Url(options.iv));
