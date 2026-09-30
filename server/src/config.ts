@@ -37,7 +37,7 @@ const hasValidAwsKeys = Boolean(
 export const config = {
   // Bind host (0.0.0.0 allows remote/container access, localhost locks to local machine)
   host: process.env.HOST || '0.0.0.0',
-  port: parseInt(process.env.PORT || '3001', 10),
+  port: parseInt(process.env.PORT || '4000', 10),
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
   dataDir,
   dbPath: process.env.DB_PATH || path.join(dataDir, 'guardianbox.db'),

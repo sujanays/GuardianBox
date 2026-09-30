@@ -6,15 +6,28 @@ import { cleanupService } from './services/cleanup.service.js';
 
 const app = express();
 
+// Allowed origins setup
+const allowedOrigins = [
+  'https://guardian-qrvok1zhm-sujan-ays.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+
 // Middleware
 app.use(cors({
-  // Production UI (Vercel) + local dev UI
-  origin: [
-    'https://guardian-box-rho.vercel.app',
-    'http://localhost:5173',
-  ],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, or server-to-server)
+    if (!origin) return callback(null, true);
+    
+    // Allow matching origins or any Vercel preview deployment for this project
+    if (allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin)) {
+      return callback(null, true);
+    }
+    
+    return callback(null, false);
+  },
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Guardian-IV', 'X-Guardian-Salt'],
   exposedHeaders: [
     'X-Guardian-IV',
     'X-Guardian-Salt',
@@ -22,6 +35,7 @@ app.use(cors({
     'X-Guardian-Downloads-Count',
     'X-Guardian-Max-Downloads',
   ],
+  credentials: true
 }));
 
 app.use(express.json());
@@ -32,13 +46,18 @@ app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`[HTTP] ${req.method} ${req.originalUrl} - ${res.statusCode} (${duration}ms)`);
+    console.log(`[HTTP] ${req.method} ${req.originalUrl} ${res.statusCode} (${duration}ms)`);
   });
   next();
 });
 
-// API Routes
-app.use('/api/files', fileRoutes);
+// Root route handler to satisfy Render root health pings (avoids 404s in logs)
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'GuardianBox Blind Storage Server' });
+});
+
+// API Routes (Upload endpoint will be POST /api/upload or POST /api/files)
+app.use('/api', fileRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
