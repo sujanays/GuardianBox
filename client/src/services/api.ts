@@ -1,6 +1,6 @@
 import { bufferToBase64Url, base64UrlToBuffer } from '../crypto/keys';
 
-const API_BASE = import.meta.env.VITE_API_BASE;
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://guardianbox-server.onrender.com/api';
 
 export interface UploadPayloadOptions {
   ciphertext: ArrayBuffer;
