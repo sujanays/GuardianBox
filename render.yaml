@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: guardianbox-client
+    env: node
+    buildCommand: cd client && npm install && npm run build
+    startCommand: cd client && npm run start
+    envVars:
+      - key: PORT
+        value: 3000
+
+  - type: web
+    name: guardianbox-server
+    env: node
+    buildCommand: cd server && npm install && npm run build
+    startCommand: cd server && npm start
+    envVars:
+      - key: PORT
+        value: 4000
