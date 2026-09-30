@@ -56,8 +56,9 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'GuardianBox Blind Storage Server' });
 });
 
-// API Routes (Upload endpoint will be POST /api/upload or POST /api/files)
-app.use('/api', fileRoutes);
+// API Routes
+// Mounting at '/api/files' routes endpoints relative to /api/files (e.g. POST /api/files/upload)
+app.use('/api/files', fileRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -69,6 +70,11 @@ app.get('/api/health', (req, res) => {
     storageType: config.storageType,
     time: new Date().toISOString(),
   });
+});
+
+// 404 Fallback Handler for unhandled routes
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
 });
 
 // Start cleanup background worker

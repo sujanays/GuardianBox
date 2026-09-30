@@ -60,7 +60,7 @@ export async function uploadEncryptedPayload(options: UploadPayloadOptions): Pro
 
   formData.append('ttl_seconds', options.ttlSeconds.toString());
 
-  const response = await fetch(`${API_BASE}/upload`, {
+  const response = await fetch(`${API_BASE}/files/upload`, {
     method: 'POST',
     body: formData,
   });
@@ -82,7 +82,7 @@ export async function uploadEncryptedPayload(options: UploadPayloadOptions): Pro
  * Inspects remote metadata without decrementing burn counter.
  */
 export async function fetchFileMetadata(fileId: string): Promise<RemoteFileMetadata> {
-  const response = await fetch(`${API_BASE}/${fileId}/meta`);
+  const response = await fetch(`${API_BASE}/files/${fileId}/meta`);
   if (!response.ok) {
     if (response.status === 404 || response.status === 410) {
       throw new Error('This file has expired or was permanently destroyed after being read.');
@@ -98,7 +98,7 @@ export async function fetchFileMetadata(fileId: string): Promise<RemoteFileMetad
  * Fetches ciphertext blob and increments burn counter.
  */
 export async function fetchEncryptedCiphertext(fileId: string): Promise<DownloadResult> {
-  const response = await fetch(`${API_BASE}/${fileId}/download`);
+  const response = await fetch(`${API_BASE}/files/${fileId}/download`);
   if (!response.ok) {
     if (response.status === 404 || response.status === 410) {
       throw new Error('This file has expired or was already burned after reaching its download limit.');
