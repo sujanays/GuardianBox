@@ -13,6 +13,7 @@ GuardianBox is a zero-knowledge, end-to-end encrypted (E2EE) file-sharing platfo
 
 ## 📋 Table of Contents
 - [Core Security Invariants & Threat Model](#core-security-invariants--threat-model)
+- [Security Audit](#security-audit)
 - [Technical Architecture & Workflow](#technical-architecture--workflow)
 - [Detailed Cryptographic Specification](#detailed-cryptographic-specification)
 - [Project Structure](#project-structure--technology-stack)
@@ -39,13 +40,69 @@ GuardianBox operates under a strict threat model where the server host, cloud st
    - **Burn After Reading**: Instant atomic destruction upon reaching the download limit.
    - **TTL Purge**: Automatic background worker cleanup upon expiration.
 
+## 🔒 Security Audit
+
+GuardianBox implements a **Zero-Knowledge Architecture (ZKA)** designed so that the server operates as a completely "blind" storage engine. Key material, file metadata (original filename, type, size), and encryption passphrases never touch the backend server, database, or S3 storage buckets.
+
+Below is a detailed breakdown of potential attack vectors, threat scenarios, mitigation mechanics, and security trade-offs.
+
+---
+
+### 🔍 Threat Matrix & Attack Vector Analysis
+
+| Attack Vector / Threat | Impact Level | Threat Description | GuardianBox Security Mitigation |
+| :--- | :--- | :--- | :--- |
+| **1. Server Compromise / S3 Leak** | 🔴 Critical (External) | An attacker gains full root access to the database or S3 bucket where stored files reside. | **Mitigated.** All payload data stored on S3 is encrypted via AES-256-GCM prior to upload. Without the client-side secret key embedded in the URL hash, the stored blobs are computationally indistinguishable from random noise ($2^{256}$ brute-force complexity). |
+| **2. Loss of Secret Link / Fragment** | 🟠 High (Availability) | The user or recipient loses or misplaces the secret link (e.g., `https://app.com/v/#<ID>#<KEY>`). | **Unrecoverable by Design.** Because the encryption key exists solely within the browser history and URL hash fragment (`#`), the backend contains zero key material. **Lost links cannot be restored or reset by administrators.** |
+| **3. Link Interception / Shoulder Surfing** | 🔴 Critical (Confidentiality) | An unauthorized third party gains access to the full secret share link. | **Mitigated via Ephemeral Policies.** GuardianBox supports **Burn-after-Reading (One-Time Downloads)** and **TTL Expiration**. Once a link is consumed or expires, the backend immediately purges the ciphertext from storage. |
+| **4. Server-Side Key Leakage (MITM)** | 🔴 Critical (Interception) | A malicious proxy, ISP, or compromised backend attempts to log or inspect incoming request payloads. | **Mitigated via URI Hash Isolation.** The key is passed in the URL fragment (`#key`). RFC 3986 dictates that HTTP clients/browsers **never send URL hash fragments to the server** in HTTP headers or request paths. |
+| **5. Tampering / Ciphertext Malleability** | 🟡 Medium (Integrity) | A malicious actor or compromised server alters bytes inside the S3 bucket to corrupt the payload. | **Mitigated via AES-GCM Auth Tags.** AES-GCM includes a 128-bit authentication tag (`GCM Tag`). If a single bit of ciphertext is modified in transit or on disk, client-side decryption fails instantly (`OperationError: Ciphertext integrity check failed`). |
+| **6. Replay / Brute-Force Attacks** | 🟡 Medium (Rate Limiting) | An automated bot attempts to brute-force download endpoints or spam upload quotas. | **Mitigated via Rate Limiting & Storage Limits.** Backend routes enforce strict IP rate limiting and chunked file size caps (`MAX_FILE_SIZE_MB`) alongside automated background TTL worker sweeps. |
+
+---
+
+### 🔐 Detailed Security Scenarios & Trade-offs
+
+#### Scenario A: "What happens if the user loses the secret link?"
+* **Risk:** User uploads a file, loses their browser session/link, and asks support to recover the data.
+* **Architecture Reality:** GuardianBox maintains a zero-knowledge posture. The backend stores **only encrypted binary blobs and public IVs**. 
+* **Outcome:** **Data is permanently unrecoverable.** This is a deliberate security trade-off: eliminating master keys and admin backdoors ensures that even a sub-poenaed server cannot reveal user files.
+
+#### Scenario B: "Can a compromised Render backend read uploaded files?"
+* **Risk:** The server environment is breached or malicious code is injected into `src/index.ts`.
+* **Architecture Reality:** Web Crypto API (`window.crypto.subtle`) encrypts files inside the client's browser before `fetch()` is executed. The network payload transmitted over TLS contains only ciphertext.
+* **Outcome:** Even if an attacker controls the Render server, they only capture encrypted bytes without the corresponding key hash.
+
+#### Scenario C: "How does GuardianBox prevent unauthorized file retention?"
+* **Risk:** Stored files linger on disk/S3 indefinitely after download.
+* **Architecture Reality:** The cleanup worker service (`cleanup.service.ts`) periodically evaluates TTL timestamps and download counters. 
+* **Outcome:** When `downloads_count >= max_downloads` or `expires_at < NOW()`, the backend executes an immediate atomic deletion from S3 and the SQLite/PostgreSQL index.
+
+---
+
+### 🚨 Operational Best Practices for Deployments
+
+1. **Strict TLS (HTTPS):** Web Crypto API (`crypto.subtle`) is strictly disabled by web browsers in non-secure HTTP contexts (except `localhost`). Ensure SSL/TLS certificates are active on custom domains.
+2. **CORS Isolation:** Ensure `Access-Control-Allow-Origin` on the backend explicitly matches your exact Vercel frontend origin to prevent unauthorized cross-origin requests.
+3. **Environment Isolation:** Never store `AWS_SECRET_ACCESS_KEY` or database credentials in client-side bundles or public GitHub repositories.
+
 ---
 
 ## 📐 Technical Architecture & Workflow
 
-```
+## 🏗️ System Architecture & End-to-End Data Flow
+
+GuardianBox utilizes a **Zero-Knowledge Architecture (ZKA)**. Cryptographic key generation, encryption, and decryption are executed entirely client-side using the browser's native **Web Crypto API** (`crypto.subtle`). 
+
+The secret key remains in the browser's URL hash (`#`) and is **never transmitted across the network** or logged on the server.
+
+---
+
+### 📐 End-to-End Architecture Diagram
+
+```text
 +----------------------------------------------------------------------------------------------------+
-|                                          SENDER BROWSER                                            |
+|                                         SENDER BROWSER                                             |
 |                                                                                                    |
 |  [ Original File ] + [ Metadata (Name/Type) ]                                                      |
 |          |                                                                                         |
@@ -55,31 +112,30 @@ GuardianBox operates under a strict threat model where the server host, cloud st
 |          |                                                                                         |
 |          v                                                                                         |
 |  [ AES-GCM Encrypt ] =======================================> [ Ciphertext Blob ]                  |
-|                                                                      |                             |
-+----------------------------------------------------------------------|-----------------------------+
-                                                                       | POST /api/files/upload
-                                                                       | (Ciphertext + IV + TTL/Max)
-                                                                       | (NO KEY EVER SENT!)
-                                                                       v
-                                                    +----------------------------------+
-                                                    |     GUARDIANBOX BACKEND API      |
-                                                    |  - Blind Express Server          |
-                                                    |  - Writes Blob to S3 / Local     |
-                                                    |  - Writes Record to SQLite DB    |
-                                                    +----------------------------------+
-                                                                       |
-+----------------------------------------------------------------------|-----------------------------+
-|                                        RECIPIENT BROWSER             |                             |
-|                                                                      v                             |
-|  Opens URL: https://guardianbox.app/file/:id#key=<secret_key>        |                             |
-|                                                                      |                             |
-|  1. Extract Key from `window.location.hash` (Kept in Browser Memory) |                             |
-|  2. GET /api/files/:id/download (Receives Ciphertext + IV) <---------+                             |
+|                                                                     |                              |
++---------------------------------------------------------------------|------------------------------+
+                                                                      | POST /api/files/upload
+                                                                      | (Ciphertext + IV + TTL/Max)
+                                                                      | (NO KEY EVER SENT!)
+                                                                      v
+                                                  +----------------------------------+
+                                                  |     GUARDIANBOX BACKEND API      |
+                                                  |  - Blind Express Server          |
+                                                  |  - Writes Blob to S3 / Local     |
+                                                  |  - Writes Record to SQLite DB    |
+                                                  +----------------------------------+
+                                                                      |
++---------------------------------------------------------------------|------------------------------+
+|                                       RECIPIENT BROWSER             |                              |
+|                                                                     v                              |
+|  Opens URL: [https://guardianbox.app/file/:id#key=](https://guardianbox.app/file/:id#key=)<secret_key>        |                              |
+|                                                                     |                              |
+|  1. Extract Key from `window.location.hash` (Kept in Browser Memory)|                              |
+|  2. GET /api/files/:id/download (Receives Ciphertext + IV) <---------+                              |
 |  3. [ Web Crypto API: AES-GCM Decrypt(Ciphertext, Key, IV) ]                                       |
 |  4. Integrity Verified via GCM Auth Tag                                                            |
 |  5. Reconstruct Original File Blob & Trigger Browser Download                                      |
 +----------------------------------------------------------------------------------------------------+
-```
 
 ---
 
